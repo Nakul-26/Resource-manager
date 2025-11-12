@@ -1,0 +1,118 @@
+/* static/css/style.css */
+
+body {
+    transition: background-color 0.3s, color 0.3s;
+}
+
+body.dark-mode {
+    background-color: #212529; /* Dark background */
+    color: #f8f9fa; /* Light text */
+}
+
+body.dark-mode .container {
+    background-color: #343a40; /* Slightly lighter dark for container */
+    border-radius: 8px;
+    padding: 20px;
+}
+
+body.dark-mode .table {
+    color: #f8f9fa;
+}
+
+body.dark-mode .table-striped tbody tr:nth-of-type(odd) {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+body.dark-mode .form-control,
+body.dark-mode .form-select {
+    background-color: #495057;
+    color: #f8f9fa;
+    border-color: #6c757d;
+}
+
+body.dark-mode .form-control::placeholder {
+    color: #ced4da;
+}
+
+body.dark-mode .accordion-button {
+    background-color: #495057;
+    color: #f8f9fa;
+}
+
+body.dark-mode .accordion-button:not(.collapsed) {
+    background-color: #6c757d;
+    color: #f8f9fa;
+}
+
+body.dark-mode .accordion-body {
+    background-color: #343a40;
+    color: #f8f9fa;
+}
+
+body.dark-mode .list-group-item {
+    background-color: #495057;
+    color: #f8f9fa;
+    border-color: #6c757d;
+}
+
+body.dark-mode .alert-info {
+    background-color: #0c5460;
+    color: #d1ecf1;
+    border-color: #0c5460;
+}
+
+/* Custom toggle switch styling */
+.theme-switch-wrapper {
+    display: flex;
+    align-items: center;
+    margin-left: auto; /* Pushes it to the right in a flex container */
+}
+
+.theme-switch {
+    display: inline-block;
+    height: 34px;
+    position: relative;
+    width: 60px;
+}
+
+.theme-switch input {
+    display: none;
+}
+
+.slider {
+    background-color: #ccc;
+    bottom: 0;
+    cursor: pointer;
+    left: 0;
+    position: absolute;
+    right: 0;
+    top: 0;
+    transition: .4s;
+}
+
+.slider:before {
+    background-color: #fff;
+    bottom: 4px;
+    content: "";
+    height: 26px;
+    left: 4px;
+    position: absolute;
+    transition: .4s;
+    width: 26px;
+}
+
+input:checked + .slider {
+    background-color: #66bb6a;
+}
+
+input:checked + .slider:before {
+    transform: translateX(26px);
+}
+
+.slider.round {
+    border-radius: 34px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
