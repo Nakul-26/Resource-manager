@@ -116,3 +116,16 @@ input:checked + .slider:before {
 .slider.round:before {
     border-radius: 50%;
 }
+
+/* Drag and Drop Feedback */
+.dropped-success {
+    background-color: #d4edda; /* Light green for success */
+    border-color: #28a745 !important; /* Green border */
+    color: #155724; /* Dark green text */
+}
+
+body.dark-mode .dropped-success {
+    background-color: #1e4c2e; /* Darker green for success in dark mode */
+    border-color: #28a745 !important;
+    color: #d4edda;
+}

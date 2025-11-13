@@ -20,65 +20,176 @@
             </div>
         </div>
         <p class="lead">Upload your files or folders to analyze and optimize them.</p>
+        {% if error %}
+            <div class="alert alert-danger mt-3" role="alert">
+                {{ error }}
+            </div>
+        {% endif %}
         <form action="/upload" method="post" enctype="multipart/form-data" class="mt-4">
             <div class="mb-3">
                 <label for="file" class="form-label">Select a file or folder to upload</label>
                 <div id="drop-zone" class="border border-2 border-dashed rounded p-5 text-center">
                     Drag and drop files or folders here, or click to browse.
-                    <input type="file" class="form-control d-none" id="file" name="file" webkitdirectory directory multiple>
+                    <span id="drop-zone-message" class="d-block mt-2"></span>
+                    <input type="file" class="form-control d-none" id="file" name="file" multiple webkitdirectory directory>
                 </div>
             </div>
             <button type="submit" class="btn btn-primary">Upload and Analyze</button>
         </form>
     </div>
-    <script>
-        const toggleSwitch = document.getElementById('checkbox');
-        const currentTheme = localStorage.getItem('theme');
+            <script>
+                const toggleSwitch = document.getElementById('checkbox');
+                const currentTheme = localStorage.getItem('theme');
+        
+                if (currentTheme) {
+                    document.body.classList.add(currentTheme);
+                    if (currentTheme === 'dark-mode') {
+                        toggleSwitch.checked = true;
+                    }
+                }
+        
+                function switchTheme(e) {
+                    if (e.target.checked) {
+                        document.body.classList.add('dark-mode');
+                        localStorage.setItem('theme', 'dark-mode');
+                    } else {
+                        document.body.classList.remove('dark-mode');
+                        localStorage.setItem('theme', 'light-mode');
+                    }    
+                }
+        
+                toggleSwitch.addEventListener('change', switchTheme, false);
+        
+                // AJAX file upload with folder support
+                const dropZone = document.getElementById('drop-zone');
+                const fileInput = document.getElementById('file');
+                const submitButton = document.querySelector('button[type="submit"]');
 
-        if (currentTheme) {
-            document.body.classList.add(currentTheme);
-            if (currentTheme === 'dark-mode') {
-                toggleSwitch.checked = true;
-            }
-        }
+                function uploadFiles(filesWithPaths) {
+                    if (!filesWithPaths || filesWithPaths.length === 0) return;
 
-        function switchTheme(e) {
-            if (e.target.checked) {
-                document.body.classList.add('dark-mode');
-                localStorage.setItem('theme', 'dark-mode');
-            } else {
-                document.body.classList.remove('dark-mode');
-                localStorage.setItem('theme', 'light-mode');
-            }    
-        }
+                    submitButton.disabled = true;
+                    submitButton.textContent = 'Uploading... Please wait.';
 
-        toggleSwitch.addEventListener('change', switchTheme, false);
+                    const formData = new FormData();
+                    // Append each file using its relative path so server can recreate folders
+                    filesWithPaths.forEach(({ file, relativePath }) => {
+                        formData.append('file', file, relativePath || file.name);
+                        formData.append('lastModified', file.lastModified);
+                    });
 
-        // Drag and drop functionality
-        const dropZone = document.getElementById('drop-zone');
-        const fileInput = document.getElementById('file');
+                    fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => {
+                        if (response.redirected) {
+                            window.location.href = response.url;
+                        } else {
+                            return response.text().then(text => {
+                                console.error('Upload failed:', text);
+                                alert('An error occurred during upload. Please try again.');
+                                submitButton.disabled = false;
+                                submitButton.textContent = 'Upload and Analyze';
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Network Error:', error);
+                        alert('A network error occurred during upload. Please check your connection.');
+                        submitButton.disabled = false;
+                        submitButton.textContent = 'Upload and Analyze';
+                    });
+                }
 
-        dropZone.addEventListener('click', () => fileInput.click());
+                function getFilesFromInput(fileList) {
+                    const arr = [];
+                    for (let i = 0; i < fileList.length; i++) {
+                        const f = fileList[i];
+                        const relativePath = f.webkitRelativePath || f.relativePath || f.name;
+                        arr.push({ file: f, relativePath });
+                    }
+                    return arr;
+                }
 
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('border-primary');
-        });
+                // Traverse FileSystemEntry (webkitGetAsEntry) to collect files with full paths
+                function traverseFileTree(entry, path = '') {
+                    return new Promise((resolve) => {
+                        if (entry.isFile) {
+                            entry.file(file => {
+                                file.relativePath = path + file.name;
+                                resolve([file]);
+                            });
+                        } else if (entry.isDirectory) {
+                            const dirReader = entry.createReader();
+                            dirReader.readEntries(entries => {
+                                const promises = [];
+                                for (const ent of entries) {
+                                    promises.push(traverseFileTree(ent, path + entry.name + '/'));
+                                }
+                                Promise.all(promises).then(results => resolve([].concat(...results)));
+                            });
+                        } else {
+                            resolve([]);
+                        }
+                    });
+                }
 
-        dropZone.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('border-primary');
-        });
+                function getFilesFromDataTransfer(dt) {
+                    return new Promise((resolve) => {
+                        const items = dt.items;
+                        if (!items) {
+                            // Fallback
+                            resolve(getFilesFromInput(dt.files));
+                            return;
+                        }
 
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('border-primary');
-            
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                fileInput.files = files;
-            }
-        });
-    </script>
-</body>
-</html>
+                        const entryPromises = [];
+                        for (let i = 0; i < items.length; i++) {
+                            const item = items[i];
+                            if (item.kind === 'file' && typeof item.webkitGetAsEntry === 'function') {
+                                const entry = item.webkitGetAsEntry();
+                                if (entry) {
+                                    entryPromises.push(traverseFileTree(entry, ''));
+                                }
+                            } else if (item.kind === 'file') {
+                                const file = item.getAsFile();
+                                if (file) entryPromises.push(Promise.resolve([Object.assign(file, { relativePath: file.name })]));
+                            }
+                        }
+
+                        Promise.all(entryPromises).then(results => {
+                            const flat = [].concat(...results).map(f => ({ file: f, relativePath: f.relativePath || f.webkitRelativePath || f.name }));
+                            resolve(flat);
+                        }).catch(() => resolve([]));
+                    });
+                }
+
+                // Handle click to browse
+                dropZone.addEventListener('click', () => fileInput.click());
+                fileInput.addEventListener('change', () => {
+                    const filesWithPaths = getFilesFromInput(fileInput.files);
+                    uploadFiles(filesWithPaths);
+                });
+
+                // Handle drag and drop
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.add('border-primary');
+                });
+
+                dropZone.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('border-primary');
+                });
+
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('border-primary');
+                    getFilesFromDataTransfer(e.dataTransfer).then(filesWithPaths => {
+                        uploadFiles(filesWithPaths.map(f => ({ file: f.file, relativePath: f.relativePath })));
+                    });
+                });
+            </script>
+        </body>
+        </html>

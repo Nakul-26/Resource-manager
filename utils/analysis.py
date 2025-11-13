@@ -17,7 +17,6 @@ def scan_folder(folder_path):
                     'path': file_path,
                     'size': os.path.getsize(file_path),
                     'last_modified': datetime.fromtimestamp(os.path.getmtime(file_path)),
-                    'hash': calculate_hash(file_path)
                 }
                 files_metadata.append(metadata)
             except OSError:
@@ -37,11 +36,26 @@ def calculate_hash(file_path, block_size=65536):
 
 def find_duplicates(files_metadata):
     """
-    Finds duplicate files based on their hash.
+    Finds duplicate files by first grouping by size, then hashing.
     """
-    hashes = defaultdict(list)
+    sizes = defaultdict(list)
     for file in files_metadata:
-        hashes[file['hash']].append(file['path'])
+        sizes[file['size']].append(file)
+
+    duplicates = defaultdict(list)
+    for size, files in sizes.items():
+        if len(files) > 1 and size > 0:
+            hashes = defaultdict(list)
+            for file in files:
+                try:
+                    file_hash = calculate_hash(file['path'])
+                    hashes[file_hash].append(file['path'])
+                except OSError:
+                    pass
+            
+            for file_hash, paths in hashes.items():
+                if len(paths) > 1:
+                    duplicates[file_hash].extend(paths)
     
-    duplicates = {hash: paths for hash, paths in hashes.items() if len(paths) > 1}
-    return duplicates
+    # Return a dictionary of hash -> list of paths
+    return dict(duplicates)

@@ -1,9 +1,26 @@
 import os
 from collections import defaultdict
+from datetime import datetime, timedelta
 
 # Heuristic for estimated savings. In a real app, this could be more sophisticated.
 WEBP_CONVERSION_SAVINGS_RATIO = 0.30  # Assume 30% savings
 COMMON_TEMP_EXTENSIONS = ['.tmp', '.log', '.bak', '.swp']
+
+def find_dormant_files(files_metadata, threshold_days):
+    """
+    Finds files that have not been modified within the given number of days.
+    """
+    if not threshold_days:
+        return []
+    
+    dormant_files = []
+    cutoff_date = datetime.now() - timedelta(days=threshold_days)
+    
+    for file in files_metadata:
+        if file['last_modified'] < cutoff_date:
+            dormant_files.append(file)
+            
+    return dormant_files
 
 def generate_recommendations(analysis_results, duplicates):
     """

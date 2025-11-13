@@ -1,9 +1,13 @@
 from flask import Flask, request, render_template, jsonify, send_file, redirect, url_for, make_response
 import os
-from utils.analysis import scan_folder, find_duplicates
-from utils.optimization import compress_files, convert_images
-from utils.recommendations import generate_recommendations
+import shutil
+import logging
+from utils.analysis import scan_folder, find_duplicates, calculate_hash
+from utils.optimization import compress_files, convert_images, find_junk_files_and_empty_folders
+from utils.recommendations import generate_recommendations, find_dormant_files
 from collections import defaultdict
+
+logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s %(message)s')
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/uploads'
@@ -31,43 +35,80 @@ def too_large(e):
 
 @app.route('/')
 def home():
-    return render_template('index.html')
+    error = request.args.get('error')
+    return render_template('index.html', error=error)
 
 @app.route('/upload', methods=['POST'])
 def upload():
     if 'file' not in request.files:
+        logging.error("Upload attempt with no 'file' part in request.")
         return 'No file part'
-    files = request.files.getlist('file')
     
-    # Clear the upload folder before each new upload
-    for root, dirs, files_in_dir in os.walk(app.config['UPLOAD_FOLDER']):
-        for f in files_in_dir:
-            try:
-                os.unlink(os.path.join(root, f))
-            except OSError:
-                pass # Ignore if file is already gone
-        for d in dirs:
-            try:
-                os.rmdir(os.path.join(root, d))
-            except OSError:
-                pass # Ignore if dir is already gone
+    files = request.files.getlist('file')
+    last_modified_times = request.form.getlist('lastModified')
+    logging.info(f"Received {len(files)} file objects.")
+    
+    # Check if any files were actually uploaded
+    if not files or (len(files) == 1 and files[0].filename == ''):
+        logging.warning("Upload form submitted but no files were selected.")
+        return redirect(url_for('home', error='No files selected for upload.'))
 
-    for file in files:
+    # Clear the upload folder before each new upload
+    if os.path.exists(app.config['UPLOAD_FOLDER']):
+        logging.info(f"Clearing upload folder: {app.config['UPLOAD_FOLDER']}")
+        shutil.rmtree(app.config['UPLOAD_FOLDER'])
+    os.makedirs(app.config['UPLOAD_FOLDER'])
+    logging.info(f"Recreated upload folder: {app.config['UPLOAD_FOLDER']}")
+
+    for file, last_modified_ms in zip(files, last_modified_times):
         if file.filename == '':
             continue
         if file:
+            # This part handles folder structures by splitting the path
             path_parts = file.filename.split('/')
-            relative_path = os.path.join(*path_parts) if len(path_parts) > 1 else file.filename
+            relative_path = os.path.join(*path_parts)
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], relative_path)
+            
+            # Ensure the directory exists
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            logging.info(f"Saving file: {file.filename} to {filepath}")
             file.save(filepath)
 
+            if last_modified_ms:
+                try:
+                    # Convert ms to seconds
+                    last_modified_s = int(last_modified_ms) / 1000
+                    os.utime(filepath, (last_modified_s, last_modified_s))
+                except (ValueError, TypeError) as e:
+                    logging.error(f"Could not set modification time for {filepath}: {e}")
+
+    logging.info("Finished saving all files. Redirecting to dashboard.")
     return redirect(url_for('dashboard'))
+
+@app.route('/archive', methods=['POST'])
+def archive():
+    selected_files = request.form.getlist('selected_files')
+    threshold_days = request.form.get('archive_threshold_days', '0')
+
+    if not selected_files:
+        return "No files selected for archiving."
+
+    zip_filename = f"Archive_Older_Than_{threshold_days}_days.zip"
+    zip_path = os.path.join(app.config['OPTIMIZED_FOLDER'], zip_filename)
+    
+    compress_files(selected_files, zip_path)
+    
+    return send_file(zip_path, as_attachment=True)
 
 @app.route('/dashboard')
 def dashboard():
+    logging.info("Entered /dashboard route. Scanning folder for dashboard.")
     analysis_results = scan_folder(app.config['UPLOAD_FOLDER'])
+    logging.info(f"scan_folder found {len(analysis_results)} files.")
+
     if not analysis_results:
+        logging.warning("No files found by scan_folder. Displaying 'No files found' message.")
         return "No files found to analyze. Please upload some files first."
 
     # Filtering logic
@@ -87,6 +128,12 @@ def dashboard():
 
     duplicates = find_duplicates(analysis_results)
     recommendations = generate_recommendations(analysis_results, duplicates)
+
+    # Time-based archiving logic
+    archive_threshold_days = request.args.get('archive_threshold_days', 0, type=int)
+    dormant_files = find_dormant_files(analysis_results, archive_threshold_days)
+
+    junk_files, empty_folders = find_junk_files_and_empty_folders(app.config['UPLOAD_FOLDER'])
 
     # Pagination logic
     page = request.args.get('page', 1, type=int)
@@ -127,7 +174,13 @@ def dashboard():
                            recently_modified_files=recently_modified_files,
                            sort_by=sort_by,
                            sort_order=sort_order,
-                           filter_text=filter_text)
+                           filter_text=filter_text,
+                           junk_files=junk_files,
+                           empty_folders=empty_folders,
+                           dormant_files=dormant_files,
+                           archive_threshold_days=archive_threshold_days)
+
+
 
 @app.route('/optimize', methods=['POST'])
 def optimize():
@@ -151,6 +204,29 @@ def optimize():
     
     return "Invalid optimization type."
 
+@app.route('/cleanup', methods=['POST'])
+def cleanup():
+    selected_files = request.form.getlist('selected_files')
+    selected_folders = request.form.getlist('selected_folders')
+
+    for file_path in selected_files:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except OSError as e:
+            print(f"Error deleting file {file_path}: {e}")
+
+    # Sort folders by length to ensure subdirectories are deleted before parent directories
+    selected_folders.sort(key=len, reverse=True)
+    for folder_path in selected_folders:
+        try:
+            if os.path.exists(folder_path):
+                os.rmdir(folder_path)
+        except OSError as e:
+            print(f"Error deleting folder {folder_path}: {e}")
+
+    return redirect(url_for('dashboard'))
+
 @app.route('/report/csv')
 def generate_csv_report():
     analysis_results = scan_folder(app.config['UPLOAD_FOLDER'])
@@ -160,7 +236,11 @@ def generate_csv_report():
     # Create CSV content
     csv_data = "Name,Path,Size (bytes),Last Modified,Hash\n"
     for file_meta in analysis_results:
-        csv_data += f'"{file_meta["name"]}","{file_meta["path"]}",{file_meta["size"]},"{file_meta["last_modified"]}","{file_meta["hash"]}"\n'
+        try:
+            file_hash = calculate_hash(file_meta['path'])
+        except OSError:
+            file_hash = "N/A"
+        csv_data += f'"{file_meta["name"]}","{file_meta["path"]}",{file_meta["size"]},"{file_meta["last_modified"]}","{file_hash}"\n'
 
     response = make_response(csv_data)
     response.headers["Content-Disposition"] = "attachment; filename=resource_report.csv"
